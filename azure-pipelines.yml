@@ -1,79 +1,45 @@
-trigger:
-- master
-- releases/*
+# Android
+# Build your Android project with Gradle.
+# Add steps that test, sign, and distribute the APK, save build artifacts, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/ecosystems/android
 
-resources:
-  repositories:
-  - repository: AzureDevOps
-    type: git
-    endpoint: AzureDevOps
-    name: AzureDevOps/AzureDevOps
+pool:
+  vmImage: 'macOS-latest'
+steps:
 
-jobs:
+- script: sudo npm install -g appcenter-cli
+- script: appcenter login --token {c28211920b06ce6a6be0993ed867ac6b428d49bb}
 
-# All tasks on Windows
-- job: build_all_windows
-  displayName: Build all tasks (Windows)
-  condition: and(succeeded(), not(variables.task), eq(variables.os, 'Windows_NT'))
-  pool:
-    vmImage: vs2017-win2016
-  timeoutInMinutes: 90
-  steps:
-  - template: ci/build-all-steps.yml
-    parameters:
-      os: Windows_NT
+- task: Gradle@2
+  inputs:
+    workingDirectory: ''
+    gradleWrapperFile: 'gradlew'
+    gradleOptions: '-Xmx3072m'
+    publishJUnitResults: false
+    testResultsFiles: '**/TEST-*.xml'
+    tasks: build
 
-# Publish on Windows
-- job: publish_windows
-  displayName: Publish
-  dependsOn: 
-  - build_all_windows
-  condition: and(succeeded(), ne(variables['build.reason'], 'PullRequest'), eq(variables.os, 'Windows_NT'))
-  pool:
-    vmImage: vs2017-win2016
-  steps:
-  - template: ci/publish-steps.yml
+- task: CopyFiles@2
+  inputs:
+    contents: '**/*.apk'
+    targetFolder: '$(build.artifactStagingDirectory)'
 
-# Courtesy push on Windows
-- job: courtesy_push_windows
-  displayName: Courtesy Push
-  dependsOn: 
-  - publish_windows
-  condition: and(succeeded(), in(variables['build.reason'], 'Schedule', 'Manual'), eq(variables['COURTESY_PUSH'], 'true'))
-  pool:
-    vmImage: vs2017-win2016
-  steps:
-  - checkout: AzureDevOps
-    fetchDepth: 1
-    persistCredentials: true
-  - checkout: self
-  - template: ci/courtesy-push.yml
+- task: PublishBuildArtifacts@1
+  inputs:
+    pathToPublish: '$(build.artifactStagingDirectory)'
+    artifactName: 'outputs'
+    artifactType: 'container'
 
-# All tasks on Linux
-- job: build_all_linux
-  displayName: Build all tasks (Linux)
-  condition: and(succeeded(), not(variables.task), eq(variables.os, 'Linux'))
-  pool:
-    vmImage: ubuntu-16.04
-  steps:
-  - template: ci/build-all-steps.yml
-    parameters:
-      os: Linux
+# Run tests using the App Center CLI
+- script: appcenter test run espresso --app "{Azure_Devops_App/Devops}" --devices "{DEVICE}" --app-path {APP_FILE} --test-series "master" --locale "en_US" --build-dir {PAT_ESPRESSO} --debug
 
-# All tasks on macOS
-- job: build_all_darwin
-  displayName: Build all tasks (macOS)
-  condition: and(succeeded(), not(variables.task), eq(variables.os, 'Darwin'))
-  pool:
-    vmImage: macos-10.15
-  steps:
-  - template: ci/build-all-steps.yml
-    parameters:
-      os: Darwin
-
-# Single task
-- job: buildSingle
-  displayName: Build single task
-  condition: and(succeeded(), variables.task)
-  steps:
-  - template: ci/build-single-steps.yml
+# Distribute the app
+- task: AppCenterDistribute@3
+  inputs:
+    serverEndpoint: 'AppCenter'
+    appSlug: '$(APP_CENTER_SLUG)'
+    appFile: '$(APP_FILE)' # Relative path from the repo root to the APK or IPA file you want to publish
+    symbolsOption: 'Android'
+    releaseNotesOption: 'input'
+    releaseNotesInput: 'Here are the release notes for this version.'
+    destinationType: 'groups'
